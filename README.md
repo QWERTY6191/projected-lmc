@@ -7,7 +7,7 @@ Packages `pandas` and `seaborn` are listed in requirements, but are only used to
 
 To install, simply do:
 ```
-pip install projected-lmc
+pip install projectedlmc
 ```
 
 
