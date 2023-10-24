@@ -18,6 +18,7 @@ release = '0.0.1'
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
+  "sphin_rtd_theme",
   "sphinx.ext.autodoc",
   "sphinx.ext.napoleon",
   "sphinx_autodoc_typehints"
@@ -34,7 +35,7 @@ autodoc_typehints = "description"
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 #html_theme = "pydata_sphinx_theme"
-html_theme = "classic"
+html_theme = "sphinx_rtd_theme"
 html_static_path = ['_static']
 
 
