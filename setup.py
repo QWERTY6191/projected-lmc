@@ -5,19 +5,20 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-    name="Autos",
+    name="projected-lmc",
     version="0.0.1",
-    author="smrfeld",
-    author_email="smrfeld@smrfeld.com",
-    description="A small example package",
+    author="",
+    author_email="",
+    description="A short package based on gpytorch implementing the Projected LMC model",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/smrfeld/sphinx_autodoc_tutorial",
+    url="https://qwerty6191.github.io/projected-lmc/",
     packages=setuptools.find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.7',
 )
+
