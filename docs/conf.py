@@ -27,7 +27,7 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 autodoc_typehints = "description"
 
 autodoc_mock_imports = [
-   “external_library"
+   "external_library"
 ]
 
 # -- Options for HTML output -------------------------------------------------
