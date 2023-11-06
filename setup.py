@@ -6,7 +6,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="projectedlmc",
-    version="0.0.1",
+    version="0.0.5",
     author="",
     author_email="",
     description="A short package based on gpytorch implementing the Projected LMC model",
@@ -20,5 +20,6 @@ setuptools.setup(
         "Operating System :: OS Independent",
     ],
     python_requires='>=3.7',
+    install_requires=['gpytorch', 'linear_operator', 'scikit_learn'],
 )
 
