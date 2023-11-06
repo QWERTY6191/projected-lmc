@@ -295,6 +295,8 @@ class MultitaskGPModel(ExactGPModel):
         elif model_type=='LMC':
             self.covar_module = gpytorch.kernels.LCMKernel(base_kernels=[copy.deepcopy(self.covar_module) for i in range(n_latents)],
                                                            num_tasks=n_tasks, rank=1)
+        else:
+            raise ValueError('Wrong specified model type, should be IMC or LMC')
 
         if init_lmc_coeffs:
             SVD = TruncatedSVD(n_components=n_latents)
