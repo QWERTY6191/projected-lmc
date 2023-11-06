@@ -10,6 +10,11 @@ To install, simply do:
 pip install projectedlmc
 ```
 
+In case the afferent github page doesn't work, the documentation can be built locally by downloading the `docs` folder and running the following command inside it (on linux):
+```
+make html
+```
+and then going to _build/html/index.html.
 
 ## Models construction and usage
 
