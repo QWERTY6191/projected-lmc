@@ -27,7 +27,9 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 autodoc_typehints = "description"
 
 autodoc_mock_imports = [
-   "external_library"
+   "gpytorch",
+   "linear_operator",
+   "scikit_learn"
 ]
 
 # -- Options for HTML output -------------------------------------------------
