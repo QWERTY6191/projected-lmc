@@ -130,23 +130,10 @@ model = ProjectedGPModel(X, Y, n_tasks, n_lat, proj_likelihood=proj_likelihood,
                                    init_lmc_coeffs=True, ker_kwargs=ker_kwargs)
 ```
 
-The MLL function is here a custom one :
+The MLL function is here a custom one, composed of the independent single-output losses of the latent processes plus additional projection-related terms :
 ```
 mll = ProjectedLMCmll(proj_likelihood, model)
 ```
-
-The last major difference is that **the loss is not computed by directly calling the model on the training data**. As described in the paper, the projected loss is decomposed into independent single-output losses of the latent processes, plus additional noise-related terms. The training syntax illustrates this notion, using the method `compute_latent_distrib` :
-```
-for i in range(n_iter):
-    optimizer.zero_grad()
-    with gp.settings.cholesky_jitter(1e-5):
-        output_train = model.compute_latent_distrib(X)
-        loss = -mll(output_train, Y)
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
-```
-`model.compute_latent_distrib(X)` computes the $N_{lat}$-dimensional values of the latent processes at test locations X, while `model(X)` computes the task-level predictions.
 
 At prediction time, in `gpytorch`, modelled noise is usually added to GP covariance by calling `likelihood(model(X_test))`. Here, the full likelihood (by opposition to the projected one) has to be called instead :
 ```
@@ -161,22 +148,23 @@ Finally, note that the various quantities described in the paper ($\mathbf{H, TY
 
 ### Results generation
 
-File `experiments.py` has been used to generate all experimental data of the paper. It allows one to inspect the effect of varying one parameter (or two, or more with slight modifications) of the synthetic data on several models trained side-by-side. These parameters, described in the article under the same name, are : `n_tasks, n_lat, n_lat_noise, n_points, mu_noise, mu_str, max_scale`. Two additional ones are `n_lat_guess` and `lik_rank`, controling the number of latent functions of the *model* and *model noise* respectively (and not of the data and data noise), making it possible to assess the impact of model misspecification. Default parameter values are contained in the dictionnary `v` and their range of variation for parametric studies in dictionnary 'v_vals'.
+File `experiments.py` has been used to generate all experiments on synthetic data. It allows one to inspect the effect of varying one parameter (or two, or more with slight modifications) of this data on several models trained side-by-side. These parameters, described in the article under the same name, are : `p, q, q_noise, n, mu_noise, mu_str, max_scale`. Two additional ones are `q_noise_guess` and `lik_rank`, controling the number of latent functions of the *model* and *model noise* respectively (and not of the data and data noise), making it possible to assess the impact of model misspecification. Default parameter values are contained in the dictionnary `v` and their range of variation for parametric studies in dictionnary 'v_vals'.
 
-To perform a parametric study, just specify the above-described parameter default values and ranges, the included models in the list `models_to_run`, and the test parameter `v_test` (plus eventally a second parameter `v_test_2` for a cross-variables study). A csv file with appropriate name will be outputed, detailing data specifications and performance metrics (defined in the function compute_metrics) for all models ; its name can be modulated through the field 'appendix' or directly. Additional options are available :
+To perform a parametric study, just specify the above-described parameter default values and ranges, the included models in the list `models_to_run`, and the test parameter `v_test` (plus eventally a second parameter `v_test_2` for a cross-variables study). A csv file with appropriate name will be outputed, detailing data specifications and performance metrics (defined in the function compute_metrics) for all models ; its name can be modulated through the field 'appendix' or directly. Predefined inputs corresponding to the paper's figures are given at the beginning of the script ; just uncomment the corresponding line to reproduce one of them. Additional options are available :
 
 + `loss_thresh` and `patience` : parameters of the stopping criterion (see paper annex D)
 + training parameters `n_iters` and `lrs` (maximal number of iterations and learning rate);
 + `models_with_sched` : what models to endow with the suggested exponential decay scheduler (otherwise, individualized schedulers for each model could be specified by directly editing the script);
 +  `print_metrics` : whether to display performance metrics in console after each run;
 +  `print_loss` : whether to display loss at the end of each 100 iterations of model training, to inspect convergence;
-+  `realistic_H` : whether to replace normally-distributed coefficients of the mixing matrix $\mathbf{H}$ with the (still random) physical toy data described in annex E of the paper;
 +  `reject_nonconverged_runs`: in some extreme or misspecified setups, some models frequently jump out of local minima. In most cases they are able to recover afterwards, but sometimes they fail to do so in the prescribed iterations budget, leading to poor predictive performance - a situation which never happened in experiments of the article. If this option is set to `True`, the output csv file is divided into two parts : one including all runs, and another including only converged runs and specifying the number of successful ones. Runs are rejected if accuracy is perceived as abnormally low (errors four times larger than the data noise).
 +  `n_random_runs`: number of random repetitions of the test.
 
 Data and model characteristics can of course be modified directly in the body of the script.
 
+Finally, 'realdata_experiments.py' has been used to generate all experiments on real data. To reproduce one of them, just fill the number of the desired one ('experiment = experiments[i]') at the beginning of the script, then run it. You can also modify experimental settings (number of inducing points, data subsampling factors, parameters of the models, models to test...) in the preamble of the file or in the block of each experiment ; these settings are defined in annex D of the paper and use the same syntax as in file experiments.py. 
+
 
 ### Graph processing
 
-Script `graph_processing.py` has been used to generate all graphs of the paper, and enables easy visualization of experimental results. For inspecting a given simple parametric study, one can simply fill the self-explanatory fields `mods_to_plot`, `var_plot`, `metric`, `scale` (chosing between 'logx', 'logy', 'loglog' and 'lin') and `equal_axes`, and then run the script of call the function `plot_var`. All styles can of course be further customized.
+Script `graph_processing.py` has been used to generate all graphs of the paper, and enables easy visualization of experimental results. For inspecting a given simple parametric study, one can simply fill the self-explanatory fields `mods_to_plot`, `v` (variable to plot again), `metric`, and then run the script or call the function `make_plot`. All styles can of course be further customized. Once again, predefined setups corresponding to the paper's figures are given at the beginning of the script ; just uncomment the corresponding line to reproduce one of them. Below the main part of the file also lies the small script which generated figure 7.
