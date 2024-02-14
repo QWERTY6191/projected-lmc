@@ -289,10 +289,7 @@ if __name__=='__main__':
                             loss.backward()
                             # def closure():  # for lfbgs optimizer
                             #     optimizers[name].zero_grad()
-                            #     if hasattr(models[name], 'compute_latent_distrib'):
-                            #         output_train = models[name].compute_latent_distrib(X)
-                            #     else:
-                            #         output_train = models[name](X)
+                            #     output_train = models[name](X)
                             #     loss = -mlls[name](output_train, Y)
                             #     loss.backward()
                             #     return loss
