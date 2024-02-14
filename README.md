@@ -11,7 +11,7 @@ pip install projectedlmc
 ```
 In case of an installation problem, you can also put file projected_lmc.py from the repo projectedlmc in your working directory and import everything from it.
 
-In case the afferent github page doesn't work, the documentation can be built locally by downloading the `docs` folder and running the following command inside it (on linux):
+In case the afferent github page doesn't work, the documentation can be built locally by downloading the `docs` folder and running the following command inside it (on linux, requires `sphinx` and `sphinx_rtd_theme` python modules to be installed):
 ```
 make html
 ```
