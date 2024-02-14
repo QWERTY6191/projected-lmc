@@ -27,7 +27,8 @@ class PolynomialMean(Mean):
             bias: whether or not to include a bias term, defaults to True
         """
         super().__init__()
-        for i in range(degree):
+        self.degree = degree
+        for i in range(1, degree+1):
             self.register_parameter(name="weights_{0}".format(i),
                                     parameter=torch.nn.Parameter(torch.randn(*batch_shape, input_size, 1)))
         if bias:
@@ -44,8 +45,9 @@ class PolynomialMean(Mean):
         Returns:
             A tensor of the values of the mean function at evaluation points.
         """
-        res = x.matmul(self.weights_1).squeeze(-1) + (x ** 2).matmul(self.weights_2).squeeze(-1) + (x ** 3).matmul(
-            self.weights_3).squeeze(-1)
+        res = 0
+        for i in range(1, self.degree + 1):
+            res += (x ** i).matmul(getattr(self, 'weights_{0}'.format(i))).squeeze(-1)
         if self.bias is not None:
             res = res + self.bias
         return res
@@ -74,8 +76,6 @@ def handle_covar_( kernel: Kernel, dim: int, decomp: Union[List[List[int]], None
     """
     if ker_kwargs is None:
         ker_kwargs = {}
-    if n_funcs > 1:
-        outputscales=False
 
     if decomp is None:
         decomp = [list(range(dim))]
@@ -111,7 +111,7 @@ def handle_covar_( kernel: Kernel, dim: int, decomp: Union[List[List[int]], None
             covar_module += gpytorch.kernels.ScaleKernel(ker)
     else:
         if outputscales:
-            covar_module = gpytorch.kernels.ScaleKernel(kernels[0])
+            covar_module = gpytorch.kernels.ScaleKernel(kernels[0], batch_shape=torch.Size([n_funcs]))
         else:
             covar_module = kernels[0]
 
@@ -148,16 +148,20 @@ class PositiveDiagonalParam(torch.nn.Module):
     def right_inverse( self, A: Tensor)-> Tensor:
         return torch.diag_embed(torch.log(torch.diag(A)))
 
-class TriangularParam(torch.nn.Module):
+class UpperTriangularParam(torch.nn.Module):
     """
     Torch parametrization for an upper triangular matrix.
     """
     def forward( self, X: Tensor)-> Tensor:
-        return X.triu()
+        upper =  X.triu()
+        upper[range(len(upper)), range(len(upper))] = torch.exp(upper[range(len(upper)), range(len(upper))])
+        return upper
     def right_inverse( self, A: Tensor)-> Tensor:
-        return A
+        res = A
+        res[range(len(res)), range(len(res))] = torch.log(res[range(len(res)), range(len(res))])
+        return res
 
-class PositiveTriangularParam(torch.nn.Module):
+class LowerTriangularParam(torch.nn.Module):
     """
     Torch parametrization for a Cholesky factor matrix (lower triangular with positive diagonal).
     """
@@ -165,6 +169,11 @@ class PositiveTriangularParam(torch.nn.Module):
         lower = X.tril()
         lower[range(len(lower)), range(len(lower))] = torch.exp(lower[range(len(lower)), range(len(lower))])
         return lower
+    def right_inverse( self, A: Tensor)-> Tensor:
+        res = A
+        res[range(len(res)), range(len(res))] = torch.log(res[range(len(res)), range(len(res))])
+        return res
+
 ##----------------------------------------------------------------------------------------------------------------------
 
 ## GP models
@@ -178,7 +187,9 @@ class ExactGPModel(gpytorch.models.ExactGP):
                   prior_width:Union[Tensor, None]=None, mean_type:Mean=gpytorch.means.ConstantMean,
                   decomp:Union[List[List[int]], None]=None, outputscales:bool=True,
                   kernel_type:Kernel=gpytorch.kernels.RBFKernel,
-                  ker_kwargs:Union[dict,None]=None, **kwargs ):
+                  ker_kwargs:Union[dict,None]=None,
+                  n_inducing_points:Union[int,None]=None,
+                  **kwargs ):
         """
         Args:
             train_x: training input data
@@ -192,6 +203,7 @@ class ExactGPModel(gpytorch.models.ExactGP):
             decomp: instructions to create a composite kernel with subgroups of variables. Ex : decomp = [[0,1],[1,2]] --> k(x0,x1,x2) = k1(x0,x1) + k2(x1,x2). Defaults to None.
             outputscales: whether to endow the kernel with a learned scaling factor, k(.) = a*k_base(.). Defaults to True
             ker_kwargs: Additional arguments to pass to the gpytorch kernel function. Defaults to None.
+            n_inducing_points: if an integer is provided, the model will use the sparse GP approximation of Titsias (2009).
         """
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
 
@@ -203,6 +215,9 @@ class ExactGPModel(gpytorch.models.ExactGP):
         self.covar_module = handle_covar_(kernel_type, dim=self.dim, decomp=decomp, prior_scales=prior_scales,
                                           prior_width=prior_width, outputscales=outputscales,
                                           n_funcs=n_tasks, ker_kwargs=ker_kwargs)
+        if n_inducing_points is not None:
+            self.covar_module = gpytorch.kernels.InducingPointKernel(self.covar_module, torch.randn(n_inducing_points, self.dim), likelihood)
+
 
     def forward( self, x:Tensor )-> Union[gpytorch.distributions.MultivariateNormal, gpytorch.distributions.MultitaskMultivariateNormal]:
         """
@@ -215,7 +230,8 @@ class ExactGPModel(gpytorch.models.ExactGP):
         """
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
-        if self.n_tasks > 1 and not hasattr(self, 'compute_latent_distrib'): # for the batch case, but not the projected model inheritance
+        # if self.n_tasks > 1 and not hasattr(self, 'compute_latent_distrib'): # for the batch case, but not the projected model inheritance
+        if False: # for the batch case, but not the projected model inheritance
             return gpytorch.distributions.MultitaskMultivariateNormal.from_batch_mvn(
                 gpytorch.distributions.MultivariateNormal(mean_x, covar_x))
         else:
@@ -268,10 +284,10 @@ class ExactGPModel(gpytorch.models.ExactGP):
 
 class MultitaskGPModel(ExactGPModel):
     """
-    A multitask GP model with exact GP treatment. This class encompasses both IMC and naive LMC models.
+    A multitask GP model with exact GP treatment. This class encompasses both ICM and naive LMC models.
     """
     def __init__( self, train_x: Tensor, train_y: Tensor, likelihood: Likelihood,
-                  n_tasks: int, n_latents: int, model_type:str='IMC', init_lmc_coeffs:bool=True,
+                  n_tasks: int, n_latents: int, model_type:str='ICM', init_lmc_coeffs:bool=True,
                   fix_diagonal:bool=False, **kwargs):
         """Initialization of the model. Note that the optional arguments of the ExactGPModel also apply here thanks to the inheritance.
 
@@ -281,34 +297,34 @@ class MultitaskGPModel(ExactGPModel):
             likelihood: Likelihood of the model
             n_tasks: number of tasks
             n_latents: number of latent functions
-            model_type: choice between 'IMC' and 'LMC' (see the reference paper). Defaults to "IMC"
+            model_type: choice between 'ICM' and 'LMC' (see the reference paper). Defaults to "ICM"
             init_lmc_coeffs: if True, initializes LMC coefficients with SVD of the training labels ; else inializes with samples from standard normal distributions. Defaults to True
-            fix_diagonal: for IMC only. If True, fixes the learned diagonal term of the task covariance matrix, accounting for task-specific (non-shared) latent processes. Defaults to False
+            fix_diagonal: for ICM only. If True, fixes the learned diagonal term of the task covariance matrix, accounting for task-specific (non-shared) latent processes. Defaults to False
         """
 
-        super(MultitaskGPModel, self).__init__(train_x, train_y, likelihood, n_tasks=1, **kwargs) # we build upon a single-task GP, created by calling parent class
+        super(MultitaskGPModel, self).__init__(train_x, train_y, likelihood, n_tasks=1, outputscales=False, **kwargs) # we build upon a single-task GP, created by calling parent class
 
         self.mean_module = gpytorch.means.MultitaskMean(self.mean_module, num_tasks=n_tasks)
         
-        if model_type=='IMC':
+        if model_type=='ICM':
             self.covar_module = gpytorch.kernels.MultitaskKernel(self.covar_module, num_tasks=n_tasks, rank=n_latents)
         elif model_type=='LMC':
             self.covar_module = gpytorch.kernels.LCMKernel(base_kernels=[copy.deepcopy(self.covar_module) for i in range(n_latents)],
                                                            num_tasks=n_tasks, rank=1)
-        else:
-            raise ValueError('Wrong specified model type, should be IMC or LMC')
 
         if init_lmc_coeffs:
             SVD = TruncatedSVD(n_components=n_latents)
             y_transformed = torch.as_tensor(SVD.fit_transform(train_y.cpu().T)) / np.sqrt(len(train_y) - 1) #shape n_tasks x n_latents
-            if model_type=='IMC':
+            if model_type=='ICM':
                 self.covar_module.task_covar_module.register_parameter(name='covar_factor', parameter=torch.nn.Parameter(y_transformed))
             elif model_type=='LMC':
                 for i in range(n_latents):
                     self.covar_module.covar_module_list[i].task_covar_module.covar_factor = torch.nn.Parameter(y_transformed[:,i].unsqueeze(-1))
+            else:
+                raise ValueError('Wrong specified model type, should be ICM or LMC')
 
         if fix_diagonal:
-            if model_type=='IMC':
+            if model_type=='ICM':
                 self.covar_module.task_covar_module.register_parameter(name='raw_var',
                                             parameter=torch.nn.Parameter(-20*torch.ones(n_tasks, device=train_y.device),
                                             requires_grad=False))
@@ -320,21 +336,19 @@ class MultitaskGPModel(ExactGPModel):
                 
         self.n_tasks, self.n_latents, self.model_type = n_tasks, n_latents, model_type
 
-
     def lmc_coefficients( self )-> Tensor:
         """
 
         Returns:
-            tensor of shape n_latents x n_tasks representing the LMC/IMC coefficients of the model.
+            tensor of shape n_latents x n_tasks representing the LMC/ICM coefficients of the model.
         """
         if self.model_type=='LMC':
             res = torch.zeros((self.n_latents, self.n_tasks))
             for i in range(self.n_latents):
                 res[i] = self.covar_module.covar_module_list[i].task_covar_module.covar_factor.data.squeeze()
         else:
-            res = self.covar_module.task_covar_module.covar_factor.data.squeeze()
+            res = self.covar_module.task_covar_module.covar_factor.data.squeeze().T
         return res
-
 
     def lscales( self, unpacked:bool=True)-> Union[List[Tensor], Tensor] :
         """
@@ -378,7 +392,6 @@ class MultitaskGPModel(ExactGPModel):
         
         else:
             return [ref_scales] if (n_kernels == 1 and not unpacked) else ref_scales
-        
         
     def outputscale( self, unpacked:bool=False)-> Tensor:
         """
@@ -489,8 +502,8 @@ class VariationalMultitaskGPModel(gpytorch.models.ApproximateGP):
             learn_inducing_locations = True
             n_ind_points = int(np.floor(train_x.shape[0] / train_ind_ratio))
             sampler = qmc.LatinHypercube(d=self.dim, seed=seed)
-            inducing_points = torch.as_tensor(2 * sampler.random(n=n_ind_points) - 1) #same inducing points for all latents here
-
+            inducing_points = torch.as_tensor(2 * sampler.random(n=n_ind_points) - 1, dtype=train_x.dtype)
+            #same inducing points for all latents here
         variational_distribution = distrib(inducing_points.size(-2), batch_shape=torch.Size([n_latents]))
         strategy = var_strat(self, inducing_points, variational_distribution, learn_inducing_locations=learn_inducing_locations)
         output_mean_module = mean_type(input_size=self.dim, batch_shape=torch.Size([n_tasks]))
@@ -505,7 +518,7 @@ class VariationalMultitaskGPModel(gpytorch.models.ApproximateGP):
         super().__init__(variational_strategy)
 
         self.covar_module = handle_covar_(kernel_type, dim=self.dim, decomp=decomp, prior_scales=prior_scales,
-                                                    prior_width=prior_width, n_funcs=n_latents, ker_kwargs=ker_kwargs)
+                                            prior_width=prior_width, n_funcs=n_latents, ker_kwargs=ker_kwargs, outputscales=False)
         self.mean_module = gpytorch.means.ZeroMean(batch_shape=torch.Size([n_latents])) #in gpytorch, latent processes can have non-zero means, which we wish to avoid
 
         self.n_tasks, self.n_latents, self.decomp = n_tasks, n_latents, decomp
@@ -518,12 +531,10 @@ class VariationalMultitaskGPModel(gpytorch.models.ApproximateGP):
                 lmc_coefficients = lmc_coefficients.cuda()
             self.variational_strategy.register_parameter("lmc_coefficients", torch.nn.Parameter(lmc_coefficients))  #shape n_latents x n_tasks
 
-
     def forward( self, x:Tensor )-> Tensor:
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-
 
     def lscales( self, unpacked:bool=True )-> Union[List[Tensor], Tensor]:  # returned shape : n_kernels x n_dims
         """
@@ -547,7 +558,6 @@ class VariationalMultitaskGPModel(gpytorch.models.ApproximateGP):
             scales = reduce(getattr, attr_name.split('.'), self.covar_module)
 
         return [scales] if (n_kernels==1 and not unpacked) else scales
-    
     
     def outputscale( self, unpacked:bool=False)-> Tensor:
         """
@@ -613,7 +623,7 @@ class ProjectedGPModel(ExactGPModel):
     """
     def __init__( self, train_x:Tensor, train_y:Tensor, n_tasks:int, n_latents:int, proj_likelihood:Union[None,Likelihood]=None, 
                   init_lmc_coeffs:bool=False, BDN:bool=True, diagonal_B:bool=False, scalar_B:bool=False, diagonal_R:bool=False,
-                  mean_type:Mean=gpytorch.means.ConstantMean, **kwargs):
+                  mean_type:Mean=gpytorch.means.ZeroMean, **kwargs):
         """Initialization of the model. Note that the optional arguments of the ExactGPModel also apply here thanks to the inheritance.
         
         Args:
@@ -635,26 +645,43 @@ class ProjectedGPModel(ExactGPModel):
             proj_likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_shape=torch.Size([n_latents]))
 
         super().__init__(train_x, torch.zeros_like(train_y), proj_likelihood, n_tasks=n_latents, 
-                         mean=gpytorch.means.ZeroMean, **kwargs) # !! proj_likelihood will only be named likelihood model attributes
-        self.train_y = train_y
+                         mean_type=gpytorch.means.ZeroMean, outputscales=False, **kwargs) 
+        # !! proj_likelihood will be named 'likelihood' in model attributes
+        self.register_buffer('train_y', train_y)
 
-        self.outer_mean_module = mean_type(input_size=self.dim, batch_shape=torch.Size([n_tasks]))
+        if mean_type is not gpytorch.means.ZeroMean:
+            raise ValueError('Projected GP model does not support non-zero output-wise means for now !')
 
         if init_lmc_coeffs:
             n_data, n_tasks = train_y.shape
-            U, Sigma, VT = randomized_svd(train_y.cpu().numpy(), n_components=n_tasks, random_state=0)
-            Q_plus, R = torch.as_tensor(VT.T), torch.as_tensor(np.diag(Sigma[:n_latents]) / np.sqrt(n_data - 1))
+            if n_data > n_tasks:
+                U, Sigma, VT = randomized_svd(train_y.cpu().numpy(), n_components=n_tasks, random_state=0)
+                Q_plus, R = torch.as_tensor(VT.T), torch.as_tensor(np.diag(Sigma[:n_latents]) / np.sqrt(n_data - 1))
+            else:
+                try:
+                    Q_plus, R_padded, Vt = torch.linalg.svd(train_y.T, full_matrices=True) 
+                    # we perform SVD rather than QR for the case where R must be diagonal (OILMM)
+                except: # sklearn's randomized_svd is more stable than torch's svd in some cases
+                    U, Sigma, Vt = randomized_svd(train_y.cpu().numpy().T, n_components=n_data, random_state=0)
+                    Q_plus, R_padded = torch.as_tensor(U), torch.as_tensor(Sigma)
+                if n_latents < n_data:
+                    R_padded = R_padded[:n_latents]
+                else:
+                    R_padded, R_short = 1e-3*torch.ones(n_latents), R_padded
+                    R_padded[:n_data] = R_short
+                R = torch.diag_embed(R_padded) / np.sqrt(n_data - 1)
         else:
-            lmc_coefficients = torch.randn(n_tasks, n_latents)
-            Q_plus, R_padded, Vt = torch.linalg.svd(lmc_coefficients)  # we perform SVD rather than QR for the case where R must be diagonal (OILMM)
-            R = R_padded[:n_latents]
+            fake_coeffs = torch.randn(n_tasks, n_latents)
+            Q_plus, R_padded, Vt = torch.linalg.svd(fake_coeffs)
+            # we perform SVD rather than QR for the case where R must be diagonal (OILMM)
+            R = torch.diag_embed(R_padded[:n_latents])
 
         lmc_coefficients = LMCMixingMatrix(Q_plus, R, n_latents)
         lmc_coefficients = torch.nn.utils.parametrizations.orthogonal(lmc_coefficients, name="Q_plus")  # parametrizes Q_plus as orthogonal
         if diagonal_R:
             torch.nn.utils.parametrize.register_parametrization(lmc_coefficients, "R", PositiveDiagonalParam())
         else:
-            torch.nn.utils.parametrize.register_parametrization(lmc_coefficients, "R", TriangularParam())
+            torch.nn.utils.parametrize.register_parametrization(lmc_coefficients, "R", UpperTriangularParam())
         self.lmc_coefficients = lmc_coefficients
 
         if scalar_B:
@@ -665,7 +692,7 @@ class ProjectedGPModel(ExactGPModel):
             self.register_parameter("log_B_tilde", torch.nn.Parameter(np.log(1e-2)*torch.ones(n_tasks - n_latents)))
         else:
             self.register_parameter("B_tilde_inv_chol", torch.nn.Parameter(torch.diag_embed(np.log(1e2)*torch.ones(n_tasks - n_latents))))
-            torch.nn.utils.parametrize.register_parametrization(self, "B_tilde_inv_chol", PositiveTriangularParam())
+            torch.nn.utils.parametrize.register_parametrization(self, "B_tilde_inv_chol", LowerTriangularParam())
         self.diagonal_B = diagonal_B
 
         if not BDN:
@@ -674,21 +701,21 @@ class ProjectedGPModel(ExactGPModel):
         self.n_tasks = n_tasks
         self.n_latents = n_latents
         self.latent_dim = -1
-        self.eps = gpytorch.variational.settings.cholesky_jitter.value(dtype=torch.float64) if hasattr(gpytorch.variational, "settings") else 1e-6
+        self.eps = 1e2 * gpytorch.variational.settings.cholesky_jitter.value(dtype=torch.float64) if hasattr(gpytorch.variational, "settings") else 1e-3
 
 
     def projected_noise( self )-> Tensor:
         """
         Returns a vector of size n_latents containing the modeled noises of latent processes. Its diagonal embedding is the matrix Sigma_P from the article. 
         """
-        return self.likelihood.noise.squeeze()
+        return self.likelihood.noise.squeeze(-1)
     
     # @lru_cache(maxsize=None) # caching projected data and projected matrix is appealing, but it messes with backpropagation. No workaround has been found yet
     def projection_matrix( self )-> Tensor:
         """
         Returns matrix T from the article of shape n_tasks x n_latents, such that YT is the "projected data" seen by latent processes 
         """
-        H_pinv = torch.linalg.solve_triangular(self.lmc_coefficients.R.T, self.lmc_coefficients.Q, upper=True, left=False)  # shape n_tasks x n_latents
+        H_pinv = torch.linalg.solve_triangular(self.lmc_coefficients.R.T, self.lmc_coefficients.Q, upper=False, left=False)  # shape n_tasks x n_latents
         if hasattr(self, "M"):
             return H_pinv + self.lmc_coefficients.Q_orth() @ self.M.T * self.projected_noise()[None,:]
         else:
@@ -702,7 +729,7 @@ class ProjectedGPModel(ExactGPModel):
 
         Returns:
             The array ZT, where Z is the input and T the projection matrix from the reference article.
-        """        
+        """
         unscaled_proj = self.lmc_coefficients.Q().T @ data.T
         Hpinv_times_Y = torch.linalg.solve_triangular(self.lmc_coefficients.R, unscaled_proj, upper=True)  # shape n_latents x n_points ; opposite convention to most other quantities !!
         if hasattr(self, "M"):
@@ -719,33 +746,34 @@ class ProjectedGPModel(ExactGPModel):
         res = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=self.n_tasks, rank=self.n_tasks, has_global_noise=False)
         Q, Q_orth, R = self.lmc_coefficients.Q(), self.lmc_coefficients.Q_orth(), self.lmc_coefficients.R
         sigma_p = self.projected_noise()
+        if sigma_p.is_cuda:
+            res.cuda()
         if self.diagonal_B:
             B_tilde_root = torch.diag_embed(torch.exp(self.log_B_tilde / 2))
         else:
-            B_tilde_root = torch.linalg.solve_triangular(self.B_tilde_inv_chol, torch.eye(self.n_tasks - self.n_latents), upper=False).T
+            B_tilde_root = torch.linalg.solve_triangular(self.B_tilde_inv_chol, 
+                                            torch.eye(self.n_tasks - self.n_latents, device=self.B_tilde_inv_chol.device), upper=False).T
         QR = Q @ R
         if hasattr(self, "M"):
             B_tilde = B_tilde_root @ B_tilde_root.T
             B_term = Q_orth @ B_tilde @ Q_orth.T
             M_term = - QR @ (sigma_p[:,None] * self.M) @ B_tilde @ Q_orth.T
             Mt_term = M_term.T
-            if 2*self.n_latents <= self.n_tasks :
-                sigma_p_pad = torch.cat((torch.diag_embed(torch.sqrt(sigma_p)), 
-                                         torch.zeros((self.n_latents, self.n_tasks - 2*self.n_latents))), dim=1)
-            else:
-                sigma_p_pad = torch.diag_embed(torch.sqrt(sigma_p))
-                B_tilde_root = torch.cat((B_tilde_root, torch.zeros((len(B_tilde_root), 2*self.n_latents - self.n_tasks))), dim=1)
-            D_term_root = QR @ ( sigma_p_pad + sigma_p[:,None] * self.M @ B_tilde_root)
+            D_term_rotated = torch.diag_embed(sigma_p) + sigma_p[:,None] * self.M @ B_tilde @ self.M.T * sigma_p[None,:]
+            D_term = QR @ D_term_rotated @ QR.T
         else:
             B_term_root = Q_orth @ B_tilde_root
             B_term = B_term_root @ B_term_root.T
             M_term, Mt_term = 0., 0.
             D_term_root = QR * torch.sqrt(sigma_p)[None,:]
-        D_term = D_term_root @ D_term_root.T
+            D_term = D_term_root @ D_term_root.T
+
         Sigma = D_term + M_term + Mt_term + B_term
-        with torch.no_grad():
-            eps = 1e-9
-            while True:
+        # We use a while loop to ensure that the full noise covariance is positive definite.
+        # We can deactivate gradient computation as loss computation does not involve the full likelihood
+        with torch.no_grad(): 
+            eps = 1e-6
+            while eps < self.eps:
                 try:
                     identity = torch.eye(self.n_tasks, dtype=res.task_noise_covar.dtype, device=res.task_noise_covar.device)
                     res.task_noise_covar_factor.data = torch.linalg.cholesky(Sigma + eps*identity)
@@ -753,8 +781,8 @@ class ProjectedGPModel(ExactGPModel):
                 except:
                     eps *= 10
                     print("Cholesky of the full noise covariance failed. Trying again with jitter {0} ...".format(eps))
-        return res
 
+        return res
 
     def B_tilde( self )-> Tensor:
         """
@@ -768,25 +796,10 @@ class ProjectedGPModel(ExactGPModel):
             L_inv = torch.linalg.solve_triangular(self.B_tilde_inv_chol, torch.eye(self.n_tasks - self.n_latents), upper=False)
             return L_inv.T @ L_inv
 
-    def forward( self, x:Tensor )-> gpytorch.distributions.MultivariateNormal:  # !!! forward only returns values of the latent processes ! But is it really used by gpytorch ?
+    def forward( self, x:Tensor )-> gpytorch.distributions.MultivariateNormal:  # ! forward only returns values of the latent processes !
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-
-    def compute_latent_distrib( self, x:Tensor, **kwargs )-> gpytorch.distributions.MultivariateNormal:
-        """
-        Outputs (distributional) posterior values of the latent processes at the input locations. This is the function which is called to compute
-        the loss during training.
-        Args:
-            x: input data tensor
-
-        Returns:
-            A batched gpytorch multivariate normal distribution representing latent processes values, which mean has shape n_latents x n_points.
-        """          
-        super().set_train_data(inputs=self.train_inputs, targets=self.project_data(self.train_y), strict=False)
-        batch_distrib = ExactGPModel.__call__(self, x, **kwargs)
-        return batch_distrib  # shape n_latents x n_points
-
 
     def __call__(self, x:Tensor, **kwargs)-> gpytorch.distributions.MultitaskMultivariateNormal:
         """
@@ -796,7 +809,10 @@ class ProjectedGPModel(ExactGPModel):
 
         Returns:
             A multitask multivariate gpytorch normal distribution representing task processes values, which mean has shape n_points x n_tasks.
-        """        
+        """
+        if self.training: # in training mode, we just compute the prior distribution of latent processes
+            return super().__call__(x, **kwargs)
+        
         super().set_train_data(inputs=self.train_inputs, targets=self.project_data(self.train_y), strict=False)
         latent_dist = ExactGPModel.__call__(self, x, **kwargs)
 
@@ -814,18 +830,13 @@ class ProjectedGPModel(ExactGPModel):
 
         # Covar: ... x (N x n_tasks) x (N x n_tasks)
         latent_covar = latent_dist.lazy_covariance_matrix
-        self.latent_covar_op = latent_covar
         lmc_factor = RootLinearOperator(lmc_coefficients.unsqueeze(-1))
         latent_covar = to_linear_operator(latent_covar.evaluate())
         covar = KroneckerProductLinearOperator(latent_covar, lmc_factor).sum(latent_dim)
         covar = covar.add_jitter(self.eps)
-        self.covar = covar
 
-        # Done!
-        function_dist = gpytorch.distributions.MultitaskMultivariateNormal(mean, covar)
-        tasks_means = self.outer_mean_module(x)
-        return function_dist.__class__(function_dist.mean + tasks_means.T, function_dist.lazy_covariance_matrix)
-
+        return gpytorch.distributions.MultitaskMultivariateNormal(mean, covar)
+    
 
 class ProjectedLMCmll(gpytorch.mlls.ExactMarginalLogLikelihood):
     """
@@ -847,7 +858,7 @@ class ProjectedLMCmll(gpytorch.mlls.ExactMarginalLogLikelihood):
         self.previous_lat = None
 
 
-    def forward(self, latent_function_dist:gpytorch.distributions.Distribution, target:Tensor, *params):
+    def forward(self, latent_function_dist:gpytorch.distributions.Distribution, target:Tensor, inputs=None, *params):
         """
         Computes the value of the loss (MLL) given the model predictions and the observed values at training locations. 
         Args:
@@ -870,8 +881,8 @@ class ProjectedLMCmll(gpytorch.mlls.ExactMarginalLogLikelihood):
 
         # Get the log prob of the marginal distribution of latent processes
         latent_output = self.likelihood(latent_function_dist, *params) # shape n_latents x n_points
-        latent_res = latent_output.log_prob(proj_target).sum()
-        latent_res = self._add_other_terms(latent_res, params).div_(num_data)  # Scale by the amount of data we have
+        latent_res = latent_output.log_prob(proj_target)
+        latent_res = self._add_other_terms(latent_res, params).sum().div_(num_data)  # Scale by the amount of data we have
 
         # compute the part of likelihood lost by projection
         p, q = self.model.n_tasks, self.model.n_latents
@@ -889,7 +900,8 @@ class ProjectedLMCmll(gpytorch.mlls.ExactMarginalLogLikelihood):
             discarded_noise_term = discarded_noise_root @ discarded_noise_root.T
 
         ## We store the additional terms in a list attribute in order to be able to plot them individually for testing
-        self.proj_term_list = [0]*3  # all terms are implicitly or explicitly divided by the number of datapoints
+        # All terms are implicitly or explicitly divided by the number of datapoints
+        self.proj_term_list = [0]*3
         self.proj_term_list[0] = - 0.5 * 2 * torch.sum(log_B_tilde_root_diag) # factor 2 because of the use of a root
         self.proj_term_list[1] = - 0.5 * torch.trace(discarded_noise_term).div_(num_data)
         self.proj_term_list[2] = - 0.5 * 2 * torch.trace(torch.abs(self.model.lmc_coefficients.R)) # factor 2 because of the use of a root
