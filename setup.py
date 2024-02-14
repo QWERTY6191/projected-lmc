@@ -6,7 +6,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="projectedlmc",
-    version="0.0.5",
+    version="0.0.7",
     author="",
     author_email="",
     description="A short package based on gpytorch implementing the Projected LMC model",
