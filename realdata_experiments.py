@@ -435,7 +435,7 @@ if experiment=='ship':
             'lik_rank': 0,
             'void' : [0.]}
         v_vals = {
-            'q' : range(1,n_tasks+1), 
+            'q' : range(1,11), 
             'lik_rank' : [0,n_tasks],
             'void' : [0.]}
         v_test = 'q'
