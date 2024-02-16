@@ -296,6 +296,7 @@ if experiment=='tidal':
         return y - np.polyval(coef, x)
     degree = 2 # degree of the polynomial detrending
     ndiv = 4 # subsampling factor
+    n_ind_points = None
     if __name__ == "__main__":
         torch.set_default_dtype(torch.float32)
         start_date = '2020-06-01'
@@ -425,7 +426,6 @@ if experiment=='ship':
         last_epoch = 5000
         patience = 500
         lambda_f = lambda i : i/last_epoch*lr_min/lr_max + (last_epoch-i)/last_epoch*lr_max if i <= last_epoch else lr_min/lr_max
-        models_to_run = ['proj','diagproj', 'oilmm','var','bdn', 'bdn_diag', 'ICM']
         n_iters = dict(zip(models_to_run, [50000]*len(models_to_run)))
         lrs = dict(zip(models_to_run, [lr_max]*len(models_to_run)))
         models_with_sched = models_to_run
@@ -462,6 +462,7 @@ if experiment=='ship':
 ##----------------------------------------------
 ## Neutronics
 if experiment=='neutro':
+    n_ind_points = None
     if __name__ == "__main__":
         root = '_experiments/neutro_data/'
         torch.set_default_dtype(torch.float32)
@@ -477,7 +478,6 @@ if experiment=='neutro':
         patience = 500
         last_epoch = 5000
         lambda_f = lambda i : i/last_epoch*lr_min/lr_max + (last_epoch-i)/last_epoch*lr_max if i <= last_epoch else lr_min/lr_max
-        models_to_run = ['proj','diagproj', 'oilmm','var', 'bdn', 'bdn_diag', 'ICM']
         n_iters = dict(zip(models_to_run, [50000]*len(models_to_run)))
         lrs = dict(zip(models_to_run, [lr_max]*len(models_to_run)))
         models_with_sched = models_to_run
@@ -532,7 +532,6 @@ if experiment=='sarcos':
         patience = 500
         lrs = {'IGP':1e-2,'ICM':1e-2,'LMC':1e-2, 'var':1e-2, 'proj':1e-2, 'diagproj':1e-2, 'oilmm':1e-2, 'bdn':1e-2, 'bdn_diag':1e-2}
         n_iters = {'IGP':10000,'ICM':10000,'LMC':10000,'var':15000, 'proj':10000, 'diagproj':10000, 'oilmm':10000, 'bdn':10000, 'bdn_diag':10000}
-        models_to_run = ['proj','diagproj', 'oilmm', 'ICM','var', 'bdn', 'bdn_diag']
         models_with_sched = models_to_run
         v = {
             'q': n_tasks, 
