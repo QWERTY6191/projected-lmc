@@ -83,8 +83,7 @@ lr_min = 1e-3
 loss_tresh = 1e-4 # threshold for loss plateau detection
 patience = 500 # number of iterations without loss decrease before stopping training
 lrs = {'ICM':1e-2, 'var':1e-2, 'proj':1e-2, 'diagproj':1e-2, 'oilmm':1e-2, 'bdn':1e-2, 'bdn_diag':1e-2}
-# n_iters = {'ICM':10000, 'var':10000, 'proj':10000, 'diagproj':10000, 'oilmm':10000, 'bdn':10000, 'bdn_diag':10000}
-n_iters = {'ICM':100, 'var':100, 'proj':100, 'diagproj':100, 'oilmm':100, 'bdn':100, 'bdn_diag':100}
+n_iters = {'ICM':10000, 'var':10000, 'proj':10000, 'diagproj':10000, 'oilmm':10000, 'bdn':10000, 'bdn_diag':10000}
 all_models = ['proj', 'diagproj', 'oilmm', 'ICM', 'var', 'bdn', 'bdn_diag']
 
 ##------------------------------------------------------------------------------
