@@ -478,7 +478,7 @@ if experiment=='neutro':
         patience = 500
         last_epoch = 5000
         lambda_f = lambda i : i/last_epoch*lr_min/lr_max + (last_epoch-i)/last_epoch*lr_max if i <= last_epoch else lr_min/lr_max
-        n_iters = dict(zip(models_to_run, [50000]*len(models_to_run)))
+        n_iters = dict(zip(models_to_run, [100000]*len(models_to_run)))
         lrs = dict(zip(models_to_run, [lr_max]*len(models_to_run)))
         models_with_sched = models_to_run
         v = {
