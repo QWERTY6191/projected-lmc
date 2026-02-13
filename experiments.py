@@ -1,7 +1,7 @@
 from projected_lmc import *
 import numpy as np
 import torch
-gpu = False
+gpu = True
 if gpu:
     torch.set_default_dtype(torch.float32)
 else:
@@ -9,8 +9,6 @@ else:
 import gpytorch as gp
 import pandas as pd
 import time
-from scipy.stats import pearsonr
-from scipy.spatial.distance import cdist
 
 ##----------------------------------------------------------------------------------------------------------------------
 ## Setting default parameters
@@ -41,7 +39,7 @@ v_vals = {  # values to be tested
 'void' : [0.]
 }
 
-models_to_run = ['proj', 'diagproj', 'oilmm', 'ICM', 'var', 'bdn', 'bdn_diag']
+models_to_run = ['ICM','PLMC','oilmm','var','PLMC_fast']
 models_with_sched = models_to_run
 v_test = 'void' # replace by the parameter to be tested (or perform a one-point experiment)
 v_test_2 = 'void' # if not 'void', interaction between two parameters is tested
@@ -50,13 +48,13 @@ n_ind_points = None  # if not None, all models will use an inducing point approx
 n_random_runs = 1 # number of random repetitions of the experiment (each one with different data)
 ##----------------------------------------------------------------------------------------------------------------------
 
-## Reproducing the paper's results
+## >>> Reproducing the experiments from the paper : just uncomment the desired line and run the script <<<
 
-v['mu_str'], v_test, n_random_runs = 0.99, 'mu_noise', 40 # Figure 1
-# v_test, n_random_runs = 'mu_str', 20 # Figure 2
-# v_test, n_random_runs = 'q_noise', 10 # Figure 3
-# v_test, n_random_runs = 'p', 20 # Figure 4, 5a/ and 6a/
-# v_test, n_random_runs = 'q', 20 # Figure 5b/ and 6b/
+# v['mu_str'], v_test, n_random_runs = 0.99, 'mu_noise', 50 # Figure 1 a/
+# v_test, n_random_runs = 'mu_str', 40 # Figures 1 b/ and 2 a/
+# v_test, n_random_runs = 'q_noise', 50 # Figure 2 b/
+# v_test, n_random_runs = 'p', 50 # Figures 3, 4a/ and 6a/
+# v_test, n_random_runs = 'q', 50 # Figure 4b/ and 6b/
 ##----------------------------------------------------------------------------------------------------------------------
 
 ## Results formatting
@@ -65,7 +63,7 @@ print_loss=True # if True, loss is printed after freq_print iteration (dosen't a
 freq_print=1000
 reject_nonconverged_runs = False 
 # if True, output dataframe will contain one part with all results stored, and one where results with errors much larger 
-# than the data noise are discarded. Not used in the paper (no convergence issues)
+# than the data noise are discarded. Not used in the paper
 appendix = '_reject' if reject_nonconverged_runs else ''
 appendix += '' # to further customize experiment name
 if n_ind_points is not None:
@@ -75,27 +73,27 @@ path = 'results/parameter_study_' + v_test + '_' + v_test_2 + appendix + '.csv'
 export_results = True
 
 ##----------------------------------------------------------------------------------------------------------------------
-
 ## Other settings
 min_scale = 0.01
 n_test = 2500 # number of test points
 lr_min = 1e-3
-loss_tresh = 1e-4 # threshold for loss plateau detection
+lr_max = 1e-2
+loss_tresh = 2.5e-6 # threshold for loss plateau detection
 patience = 500 # number of iterations without loss decrease before stopping training
-lrs = {'ICM':1e-2, 'var':1e-2, 'proj':1e-2, 'diagproj':1e-2, 'oilmm':1e-2, 'bdn':1e-2, 'bdn_diag':1e-2}
-n_iters = {'ICM':10000, 'var':10000, 'proj':10000, 'diagproj':10000, 'oilmm':10000, 'bdn':10000, 'bdn_diag':10000}
-all_models = ['proj', 'diagproj', 'oilmm', 'ICM', 'var', 'bdn', 'bdn_diag']
+last_epoch = 10000 # number of iterations after which learning rate is reduced to lr_min
+lambda_lr = lambda i : i/last_epoch*lr_min/lr_max + (last_epoch-i)/last_epoch if i <= last_epoch else lr_min/lr_max
+n_iters = dict(zip(models_to_run, [100000]*len(models_to_run)))
+lrs = dict(zip(models_to_run, [lr_max]*len(models_to_run)))
 
 ##------------------------------------------------------------------------------
-def compute_metrics(y_test, y_pred, lower, upper, noise, loss, H_guess_hid, n_iter, train_time, pred_time, print_metrics=True):
+def compute_metrics(y_test, y_pred, sigma_pred, loss, H_guess_hid, n_iter, train_time, pred_time, print_metrics=True):
     delta = y_test - y_pred
-    errs_abs = torch.abs(delta)
-    sigma_pred = (upper - lower) / 4
-    alpha_CI = torch.mean((torch.abs(pred_y - y_test) < 2 * sigma_pred).float())
+    errs_abs = torch.abs(delta).squeeze()
+    alpha_CI = torch.mean((errs_abs < 2 * sigma_pred).float())
     err2 = errs_abs ** 2
     R2_list = 1 - torch.mean(err2, dim=0) / torch.var(y_test, dim=0)
     PVA_list = torch.log(torch.mean(err2 / sigma_pred ** 2, dim=0))
-    noise_full = noise * (H_guess_hid**2).sum()  # mean of the diagonal coefficients
+    noise_full = (H_guess_hid**2).sum() / y_test.shape[1] # mean of the diagonal coefficients
 
     errs_abs = errs_abs.cpu().numpy()
     metrics = {}
@@ -165,7 +163,7 @@ if __name__=='__main__':
                 Y_noise_spec = gp_vals_hid_spec.T * (1 - mu_str)
 
                 Y_noise = (Y_noise_com + Y_noise_spec) * mu_noise
-                sig_true = H_true_hid.T @ H_true_hid * mu_str + torch.diag_embed(noise_levels) * (1 - mu_str)
+                sigma_true = H_true_hid.T @ H_true_hid * mu_str + torch.diag_embed(noise_levels) * (1 - mu_str)
                 Y = Y_sig + Y_noise
                 X = X[:,None]
                 X_test, Y_test = X[n:], Y[n:]
@@ -195,19 +193,12 @@ if __name__=='__main__':
                                         train_ind_ratio=train_ind_rat, seed=0, distrib=gp.variational.CholeskyVariationalDistribution,
                                         ker_kwargs=ker_kwargs)
                     
-                if 'proj' in models_to_run:
-                    models['proj'] = ProjectedGPModel(X, Y, p, q_mod, proj_likelihood=None,
+                if 'PLMC' in models_to_run:
+                    models['PLMC'] = ProjectedGPModel(X, Y, p, q_mod, proj_likelihood=None,
                                                     mean_type=mean_type,  kernel_type=kernel_type, decomp=decomp,
                                                     init_lmc_coeffs=True, BDN=False, diagonal_B=False, diagonal_R=False, 
                                                     scalar_B=False, ker_kwargs=ker_kwargs, n_inducing_points=n_ind_points)
-                    likelihoods['proj'] = models['proj'].likelihood
-
-                if 'diagproj' in models_to_run:
-                    models['diagproj'] = ProjectedGPModel(X, Y, p, q_mod, proj_likelihood=None,
-                                                    mean_type=mean_type, kernel_type=kernel_type, decomp=decomp,
-                                                    init_lmc_coeffs=True, BDN=False, diagonal_B=True, diagonal_R=False,
-                                                    scalar_B=False, ker_kwargs=ker_kwargs, n_inducing_points=n_ind_points)
-                    likelihoods['diagproj'] = models['diagproj'].likelihood
+                    likelihoods['PLMC'] = models['PLMC'].likelihood
 
                 if 'oilmm' in models_to_run:
                     models['oilmm'] = ProjectedGPModel(X, Y, p, q_mod, proj_likelihood=None,
@@ -216,19 +207,13 @@ if __name__=='__main__':
                                                     scalar_B=True, ker_kwargs=ker_kwargs, n_inducing_points=n_ind_points)
                     likelihoods['oilmm'] = models['oilmm'].likelihood
 
-                if 'bdn' in models_to_run:
-                    models['bdn'] = ProjectedGPModel(X, Y, p, q_mod, proj_likelihood=None,
-                                                    mean_type=mean_type, kernel_type=kernel_type, decomp=decomp,
-                                                    init_lmc_coeffs=True, BDN=True, diagonal_B=False, diagonal_R=False,
-                                                    scalar_B=False, ker_kwargs=ker_kwargs, n_inducing_points=n_ind_points)
-                    likelihoods['bdn'] = models['bdn'].likelihood
 
-                if 'bdn_diag' in models_to_run:
-                    models['bdn_diag'] = ProjectedGPModel(X, Y, p, q_mod, proj_likelihood=None,
+                if 'PLMC_fast' in models_to_run:
+                    models['PLMC_fast'] = ProjectedGPModel(X, Y, p, q_mod, proj_likelihood=None,
                                                     mean_type=mean_type, kernel_type=kernel_type, decomp=decomp,
                                                     init_lmc_coeffs=True, BDN=True, diagonal_B=True, diagonal_R=False,
-                                                    scalar_B=False, ker_kwargs=ker_kwargs, n_inducing_points=n_ind_points)
-                    likelihoods['bdn_diag'] = models['bdn_diag'].likelihood
+                                                    scalar_B=True, ker_kwargs=ker_kwargs, n_inducing_points=n_ind_points)
+                    likelihoods['PLMC_fast'] = models['PLMC_fast'].likelihood
 
                 ##------------------------------------------------------------------
                     
@@ -250,25 +235,22 @@ if __name__=='__main__':
                 if 'var' in models_to_run:
                     mlls['var'] = gp.mlls.VariationalELBO(likelihoods['var'], models['var'], num_data=n)
                     optimizers['var'] = torch.optim.AdamW([{'params': models['var'].parameters()}, {'params': likelihoods['var'].parameters()}], lr=lrs['var'])
-                if 'proj' in models_to_run:
-                    mlls['proj'] = ProjectedLMCmll(likelihoods['proj'], models['proj'])
-                    optimizers['proj'] = torch.optim.AdamW(models['proj'].parameters(), lr=lrs['proj'])
-                if 'diagproj' in models_to_run:
-                    mlls['diagproj'] = ProjectedLMCmll(likelihoods['diagproj'], models['diagproj'])
-                    optimizers['diagproj'] = torch.optim.AdamW(models['diagproj'].parameters(), lr=lrs['diagproj'])
+                if 'PLMC' in models_to_run:
+                    mlls['PLMC'] = ProjectedLMCmll(likelihoods['PLMC'], models['PLMC'])
+                    optimizers['PLMC'] = torch.optim.AdamW(models['PLMC'].parameters(), lr=lrs['PLMC'])
                 if 'oilmm' in models_to_run:
                     mlls['oilmm'] = ProjectedLMCmll(likelihoods['oilmm'], models['oilmm'])
                     optimizers['oilmm'] = torch.optim.AdamW(models['oilmm'].parameters(), lr=lrs['oilmm'])
-                if 'bdn' in models_to_run:
-                    mlls['bdn'] = ProjectedLMCmll(likelihoods['bdn'], models['bdn'])
-                    optimizers['bdn'] = torch.optim.AdamW(models['bdn'].parameters(), lr=lrs['bdn'])
-                if 'bdn_diag' in models_to_run:
-                    mlls['bdn_diag'] = ProjectedLMCmll(likelihoods['bdn_diag'], models['bdn_diag'])
-                    optimizers['bdn_diag'] = torch.optim.AdamW(models['bdn_diag'].parameters(), lr=lrs['bdn_diag'])
+                if 'PLMC_fast' in models_to_run:
+                    mlls['PLMC_fast'] = ProjectedLMCmll(likelihoods['PLMC_fast'], models['PLMC_fast'])
+                    optimizers['PLMC_fast'] = torch.optim.AdamW(models['PLMC_fast'].parameters(), lr=lrs['PLMC_fast'])
 
                 for name in models_to_run:
                     if name in models_with_sched:
-                        schedulers[name] = torch.optim.lr_scheduler.ExponentialLR(optimizers[name], gamma=np.exp(np.log(lr_min / lrs[name]) / n_iters[name]))
+                        if lambda_lr is None:
+                            schedulers[name] = torch.optim.lr_scheduler.ExponentialLR(optimizers[name], gamma=np.exp(np.log(lr_min / lrs[name]) / n_iters[name]))
+                        else:
+                            schedulers[name] = torch.optim.lr_scheduler.LambdaLR(optimizers[name], lambda_lr)
                 ##------------------------------------------------------------------
                 
                 ## Training models                 
@@ -280,19 +262,12 @@ if __name__=='__main__':
                     plateau_id = 0
                     for i in range(n_iters[name]):
                         optimizers[name].zero_grad()
-                        with gp.settings.cholesky_jitter(1e-5):
+                        with gp.settings.cholesky_max_tries(8):
                             output_train = models[name](X)
                             loss = -mlls[name](output_train, Y)
                             if print_loss and i%freq_print==0:
                                 print(loss.item())
                             loss.backward()
-                            # def closure():  # for lfbgs optimizer
-                            #     optimizers[name].zero_grad()
-                            #     output_train = models[name](X)
-                            #     loss = -mlls[name](output_train, Y)
-                            #     loss.backward()
-                            #     return loss
-                            # optimizers[name].step(closure)
                             optimizers[name].step()
                         if name in schedulers:
                             schedulers[name].step()
@@ -303,6 +278,8 @@ if __name__=='__main__':
                             if plateau_id > patience :
                                 effective_n_iters[name] = i
                                 break
+                        else:
+                            plateau_id = 0
                         last_losses[name] = new_loss
                     times[name] = time.time() - start
                 ##------------------------------------------------------------------
@@ -312,15 +289,15 @@ if __name__=='__main__':
                     models[name].eval()
                     likelihoods[name].eval()
                     if gpu:
-                        models[name] = models[name].cpu()
-                        likelihoods[name] = likelihoods[name].cpu()
+                        X_test, Y_test = X_test.cuda(), Y_test.cuda()
 
                 for name in models_to_run:
                 # All these algebra options have been tested to have little impact on results.
                 # The skip_posterior_variances option is here to be able to compute posterior mean for model ICM, even when
                 # covariance computation would saturate memory. It should be deactivated when possible.
+                    skip_var = (name=='ICM')
                     with torch.no_grad(),\
-                                gp.settings.skip_posterior_variances(state=(name=='ICM')), \
+                                gp.settings.skip_posterior_variances(state=skip_var), \
                                 gp.settings.skip_logdet_forward(state=False), \
                                 gp.settings.cg_tolerance(1e-0),\
                                 gp.settings.eval_cg_tolerance(1e-2),\
@@ -332,7 +309,7 @@ if __name__=='__main__':
                                 gp.settings.num_trace_samples(10), \
                                 gp.settings.preconditioner_tolerance(1e-3), \
                                 gp.settings.tridiagonal_jitter(1e-5), \
-                                gp.settings.cholesky_jitter(1e-3):
+                                gp.settings.cholesky_max_tries(8):
 
                         print(' \n Making predictions for {0} model...'.format(name))
                         start = time.time()
@@ -340,21 +317,30 @@ if __name__=='__main__':
                             full_likelihood = models[name].full_likelihood()
                         else:
                             full_likelihood = likelihoods[name]
-                        H_guess_hid = full_likelihood.task_noise_covar_factor.squeeze()
-                        observed_pred = full_likelihood(models[name](X_test))
-                        pred_time = time.time() - start
-                        pred_y = observed_pred.mean
-                        lower, upper = observed_pred.confidence_region()
-                        global_noise = full_likelihood.noise.squeeze() if hasattr(full_likelihood, 'noise') else 1.
-                        ##------------------------------------------------------------------
 
+                        observed_pred = full_likelihood(models[name](X_test))
+                        pred_y = observed_pred.mean
+                        global_noise = full_likelihood.noise.squeeze() if hasattr(full_likelihood, 'noise') else 1.
+                        var_pred_1 = models[name].compute_var(X_test)
+                        var_pred_2 = observed_pred.variance
+                        if skip_var:
+                            var_pred = models[name].compute_var(X_test)
+                        else:
+                            var_pred = observed_pred.variance
+                        sigma_pred = var_pred.sqrt().squeeze()
+                        pred_time = time.time() - start
+
+                        global_noise = full_likelihood.noise.squeeze() if hasattr(full_likelihood, 'noise') else 0.
+                        if hasattr(full_likelihood, 'task_noise_covar_factor'):
+                            H_guess_hid = full_likelihood.task_noise_covar_factor.squeeze()
+                            H_guess_hid[range(p), range(p)] = H_guess_hid.diag() + global_noise
+                        elif hasattr(full_likelihood, 'task_noises'):
+                            H_guess_hid = (full_likelihood.task_noises.squeeze() + global_noise).sqrt()
+                        else:
+                            H_guess_hid = torch.ones(p) * global_noise.sqrt()
+                        ##------------------------------------------------------------------
                         ## Computing, displaying and storing performance metrics
-                        if print_metrics:
-                            if hasattr(likelihoods[name], 'task_noises'):
-                                print('Noises for {0} model:'.format(name), global_noise * likelihoods[name].task_noises.cpu().numpy()) # for non-projected models if their likelihood is diagonal
-                            elif hasattr(models[name], 'full_likelihood'):  # for projected models
-                                print('Noises for {0} model:'.format(name), likelihoods[name].noise.squeeze().cpu().numpy())
-                        metrics = compute_metrics(Y_test, pred_y, lower, upper, global_noise, last_losses[name], H_guess_hid, 
+                        metrics = compute_metrics(Y_test, pred_y, sigma_pred, last_losses[name], H_guess_hid, 
                                                   effective_n_iters[name], times[name], pred_time, print_metrics=print_metrics)
                         metrics.update(v)
                         metrics['model'] = name

@@ -1,9 +1,8 @@
 import numpy as np
-import scipy
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
-import glob
+import os
 
 ##--------------------------------------------------------------------------------------------------------------------
 sns.set_style('darkgrid') # darkgrid, white grid, dark, white and ticksplt.rc('axes', titlesize=18)     # fontsize of the axes title
@@ -13,65 +12,34 @@ plt.rc('ytick', labelsize=13)    # fontsize of the tick labels
 plt.rc('legend', fontsize=13)    # legend fontsize
 plt.rc('font', size=13)          # controls default text sizes
 sns.color_palette('deep')
+plt.rcParams['text.usetex'] = True
+plt.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}'
 
+root = os.path.dirname(os.path.abspath(__file__))
 ##---------------------------------------------------------------------------------------------------------------------
 ## Plot inputs
 
 variables = ['p', 'q', 'q_noise', 'n', 'mu_noise', 'mu_str', 'max_scale', 'lik_rank']
-all_models = np.array(['ICM', 'var', 'proj', 'diagproj', 'oilmm', 'bdn', 'bdn_diag'])
+all_models = np.array(['ICM', 'var', 'PLMC', 'PLMC_fast', 'oilmm'])
 metrics = ['mean_err_abs', 'PVA', 'RMSE', 't_per_iter', 'train_time']
-
-mods_to_plot = all_models[[1,3,4,6]]
-v = variables[0] # chose the x-axis variable here
-metric = metrics[0] # chose the y-axis variable here
-n_runs = 20 # to identify the file name
 ##---------------------------------------------------------------------------------------------------------------------
 
 ## >>> Reproducing the plots from the paper : just uncomment the desired line and run the script <<<
 
-mods_to_plot, v, metric, n_runs = all_models[[0,1,3,4,6]], variables[4], metrics[2], 40   # Figure 1
-# mods_to_plot, v, metric, n_runs = all_models[[0,1,3,4,6]], variables[5], metrics[2], 20   # Figure 2
-# mods_to_plot, v, metric, n_runs = all_models[[1,3,4,6]], variables[2], metrics[1], 10   # Figure 3
-# mods_to_plot, v, metric, n_runs = all_models[[0,1,3,4,6]], variables[0], metrics[4], 20   # Figure 4
-# mods_to_plot, v, metric, n_runs = all_models[[0,1,3,4,6]], variables[0], metrics[3], 20   # Figure 5a
-# mods_to_plot, v, metric, n_runs = all_models[[0,1,3,4,6]], variables[1], metrics[3], 20   # Figure 5b
-# mods_to_plot, v, metric, n_runs = all_models[[0,1,3,4,6]], variables[0], metrics[2], 20   # Figure 6a
-# mods_to_plot, v, metric, n_runs = all_models[[0,1,3,4,6]], variables[1], metrics[2], 20   # Figure 6b
+mods_to_plot, v, metric, n_runs = all_models, variables[4], metrics[2], 50   # Figure 1 a/
+mods_to_plot, v, metric, n_runs = all_models, variables[5], metrics[2], 40   # Figure 1 b/
+mods_to_plot, v, metric, n_runs = all_models[1:], variables[5], metrics[1], 40   # Figure 2 a/
+mods_to_plot, v, metric, n_runs = all_models[1:], variables[2], metrics[1], 30   # Figure 2 b/
+mods_to_plot, v, metric, n_runs = all_models[1:], variables[0], metrics[-1], 50   # Figure 3
+mods_to_plot, v, metric, n_runs = all_models, variables[0], metrics[-2], 50   # Figure 4 a/
+mods_to_plot, v, metric, n_runs = all_models, variables[1], metrics[-2], 50   # Figure 4 b/
+mods_to_plot, v, metric, n_runs = all_models, variables[0], metrics[2], 50   # Figure 6 a/
+mods_to_plot, v, metric, n_runs = all_models, variables[1], metrics[2], 50   # Figure 6 b/
 
-prefix = '_void'
-postfix = '_{0}runs'.format(n_runs)
-prefix += '' # if experiments names are further customized
-postfix += '' # if experiments names are further customized
-error_bars=False # only available if metrics is 'mean_err_abs' (L1 error)
 ##---------------------------------------------------------------------------------------------------------------------
 ## Setup
-
-xlabel = v
-ylabel = metric
-path = 'results/parameter_study_' + v + prefix + postfix + '.csv'
-df = pd.read_csv(path, index_col=0)
-doubled = 'reject' in postfix # see file experiments.py for explanation of the 'reject' flag (not used in the paper )
-if doubled:
-    df = df.iloc[:len(df)//2, :]
-df['t_per_iter'] = df['train_time'] / df['n_iter']
-dfs = [df]
-
-## To eventually plot models from different files
-
-# o_prefix = '_void'
-# o_postfix += ''
-# o_paths = ['results/parameter_study_' + var_plot + prefix + postfix + '.csv']
-# for opath in o_paths:
-#     temp = pd.read_csv(opath, index_col=0)
-#     dfs.append(temp)
-#     # new_mods = temp['model'].unique()
-#     # df = df[~df['model'].isin(new_mods)]
-#     # df = pd.concat([df, temp], axis=0)
-
-plot_styles = {'diagproj':{'ls':'--', 'lw':2, 'c':'b', 'marker':'^', 'markersize':8},
-            'proj':{'ls':'-.', 'lw':2, 'c':'g', 'marker':'x', 'markersize':8},
-            'bdn':{'ls':':', 'lw':2, 'c':'m', 'marker':'*', 'markersize':8},
-            'bdn_diag':{'ls':':', 'lw':2, 'c':'c', 'marker':'v', 'markersize':8},
+plot_styles = {'PLMC':{'ls':'-.', 'lw':2, 'c':'g', 'marker':'x', 'markersize':8},
+            'PLMC_fast':{'ls':':', 'lw':2, 'c':'c', 'marker':'v', 'markersize':8},
             'oilmm':{'ls':'--', 'lw':2, 'c':'r', 'marker':'+', 'markersize':8},
             'var':{'ls':'-', 'lw':3, 'c':'k', 'marker':'o', 'markersize':10},
             'ICM':{'ls':'-', 'lw':3, 'c':'y', 'marker':'o', 'markersize':10}
@@ -99,9 +67,32 @@ scales_dict = {
     'RMSE':{'p':'lin', 'q':'lin', 'q_noise':'lin', 'n':'lin', 'mu_noise':'loglog', 'mu_str':'lin', 'max_scale':'logx', 'lik_rank':'lin'},
 }
 
-xlabel_f, ylabel_f = fancy_labels[xlabel], fancy_labels[ylabel]
-scale = scales_dict[metric][v]
-equal_axes=(scale=='loglog')
+prefix = '_void'
+post_postfix = '' # if experiments names are further customized
+error_bars=False # only available if metrics is 'mean_err_abs' (L1 error)
+def setup(v, metric, n_runs):
+    xlabel = v
+    ylabel = metric
+    xlabel_f, ylabel_f = fancy_labels[xlabel], fancy_labels[ylabel]
+    scale = scales_dict[metric][v]
+    equal_axes=(scale=='loglog')
+    postfix = '_{0}runs'.format(n_runs) + post_postfix
+    path = root + '/for_manuscript/parameter_study_' + v + prefix + postfix + '.csv'
+    df = pd.read_csv(path, index_col=0)
+    df['t_per_iter'] = df['train_time'] / df['n_iter']
+    dfs = [df]
+    ## To eventually plot models from different files
+    # o_prefix = '_void'
+    # o_postfix += ''
+    # o_paths = ['results/parameter_study_' + var_plot + prefix + postfix + '.csv']
+    # for opath in o_paths:
+    #     temp = pd.read_csv(opath, index_col=0)
+    #     dfs.append(temp)
+    #     # new_mods = temp['model'].unique()
+    #     # df = df[~df['model'].isin(new_mods)]
+    #     # df = pd.concat([df, temp], axis=0)
+    return dfs, v, xlabel_f, ylabel_f, scale, equal_axes
+
 
 ##---------------------------------------------------------------------------------------------------------------------
 def make_plot(dfs, v, metric, xlabel, ylabel, scale, mods_to_plot, plot_styles, equal_axes=False, error_bars=False):
@@ -153,17 +144,19 @@ def make_plot(dfs, v, metric, xlabel, ylabel, scale, mods_to_plot, plot_styles, 
     ax.legend(title='Models', labels=full_labels, title_fontsize=13)
     if equal_axes:
         ax.set_aspect('equal', adjustable='box')
-    plt.show()
+    fig = ax.get_figure()
+    fig.savefig(fname=root + '/' + '_'.join([v, metric]) + '.pdf', format='pdf')
     plt.close('all')
     return lineplot
 
+dfs, v, xlabel_f, ylabel_f, scale, equal_axes = setup(v=v, metric=metric, n_runs=n_runs)
 lineplot = make_plot(dfs, v, metric, xlabel_f, ylabel_f, scale=scale, mods_to_plot=mods_to_plot, plot_styles=plot_styles, equal_axes=equal_axes, error_bars=error_bars)
 ##---------------------------------------------------------------------------------------------------------------------
 """
 ## Weather prediction plot
 
 import matplotlib.dates as mdates
-df = pd.read_csv('results/preds_tidal_div4_14days_q_n_mix_void.csv')
+df = pd.read_csv('for_manuscript/preds_tidal_div4_14days_q_n_mix_void.csv')
 df = df[(df['Date'] >= '2020-06-05') & (df['Date'] <= '2020-06-12')]
 df['Date'] = pd.to_datetime(df['Date'])
 test_indices = np.where(df['pred0']!=0.)[0]
@@ -185,7 +178,8 @@ ax.set_ylabel('Tide height (m)')
 ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
 ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
 ax.legend()
-plt.show()
+fig = ax.get_figure()
+fig.savefig(fname=root + '/bramblemet.pdf', format='pdf')
 
 fig, ax = plt.subplots(figsize=(12, 8))
 ax.plot(df_sub['Date'], df_sub['cambermet'], color='blue')
@@ -201,5 +195,7 @@ ax.set_ylabel('Tide height (m)')
 ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
 ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
 ax.legend()
-plt.show()
+ax.legend()
+fig = ax.get_figure()
+fig.savefig(fname=root + '/cambermet.pdf', format='pdf')
 """
